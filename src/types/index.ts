@@ -14,6 +14,10 @@ export interface Product {
   description?: string
   images?: string[]
   specs?: Record<string, string>
+  stock?: number
+  createdAt?: string
+  // sourceUrl is stored server-side only and NEVER exposed in public APIs
+  sourceUrl?: string
 }
 export interface CartItem extends Product {
   quantity: number
