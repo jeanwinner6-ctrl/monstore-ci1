@@ -273,6 +273,13 @@ export const messagesAPI = {
 // ===== SELLER APPLICATIONS API =====
 
 export const sellerApplicationsAPI = {
+  create: async (application: Partial<SellerApplication>): Promise<SellerApplication> => {
+    return http<SellerApplication>('/admin/sellers/applications', {
+      method: 'POST',
+      body: JSON.stringify(application),
+    });
+  },
+
   list: async (): Promise<SellerApplication[]> => {
     return http<SellerApplication[]>('/admin/sellers/applications');
   },

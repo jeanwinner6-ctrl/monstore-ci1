@@ -464,6 +464,26 @@ app.get('/admin/sellers/applications', async (req, res) => {
   }
 });
 
+// POST /admin/sellers/applications - Create a seller application
+app.post('/admin/sellers/applications', async (req, res) => {
+  try {
+    const data = await readData();
+    const application = {
+      id: Date.now().toString(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      ...req.body,
+    };
+    data.sellerApplications.push(application);
+    await writeData(data);
+    
+    res.status(201).json(application);
+  } catch (error) {
+    console.error('Error creating seller application:', error);
+    res.status(500).json({ error: 'Failed to create seller application' });
+  }
+});
+
 // PUT /admin/sellers/applications/:id - Update application status
 app.put('/admin/sellers/applications/:id', async (req, res) => {
   try {
