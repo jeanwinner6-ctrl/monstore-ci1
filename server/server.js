@@ -188,7 +188,7 @@ app.post('/admin/products/bulk', async (req, res) => {
     }
 
     const createdProducts = products.map(p => ({
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
       createdAt: new Date().toISOString(),
       ...p,
     }));
