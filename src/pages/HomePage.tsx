@@ -3,16 +3,26 @@ import { HeroCarousel } from '../components/HeroCarousel'
 import { ProductGrid } from '../components/ProductGrid'
 import { TrustBadges } from '../components/TrustBadges'
 import { Product } from '../types'
+import { Link, useNavigate } from 'react-router-dom'
+
 interface HomePageProps {
   products: Product[]
   onAddToCart: (product: Product) => void
 }
 export function HomePage({ products, onAddToCart }: HomePageProps) {
+  const navigate = useNavigate()
+
   // Filter products for different sections
   const flashDeals = products.filter((p) => p.discount && p.discount > 0).slice(0, 5)
   const electronics = products.filter((p) => p.category === 'Électronique').slice(0, 5)
   const fashion = products.filter((p) => p.category === 'Mode').slice(0, 5)
   const home = products.filter((p) => p.category === 'Maison').slice(0, 5)
+
+  // Numéro WhatsApp support (à personnaliser)
+  const supportWhatsApp = '2250707000000' // ex: +225 07 07 00 00 00 → 2250707000000
+  const waMessage = encodeURIComponent('Bonjour MonStore, je souhaite des informations.')
+  const whatsappHref = `https://wa.me/${supportWhatsApp}?text=${waMessage}`
+
   return (
     <div className="space-y-8 pb-12">
       {/* Hero Section */}
@@ -29,9 +39,10 @@ export function HomePage({ products, onAddToCart }: HomePageProps) {
               <p className="text-sm text-gray-600 mb-4">
                 Ouvrez votre boutique et touchez des millions de clients.
               </p>
-              <button className="text-[#FF6B00] font-bold text-sm hover:underline">
+              {/* Page d’onboarding vendeurs */}
+              <Link to="/sell" className="text-[#FF6B00] font-bold text-sm hover:underline">
                 Commencer &rarr;
-              </button>
+              </Link>
             </div>
             <div className="flex-1 bg-blue-50 rounded-lg p-6 flex flex-col justify-center items-center text-center border border-blue-100">
               <h3 className="font-bold text-lg text-gray-900 mb-2">
@@ -40,9 +51,15 @@ export function HomePage({ products, onAddToCart }: HomePageProps) {
               <p className="text-sm text-gray-600 mb-4">
                 Besoin d'aide ? Notre équipe est là 24/7.
               </p>
-              <button className="text-blue-600 font-bold text-sm hover:underline">
+              {/* Lien WhatsApp support */}
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 font-bold text-sm hover:underline"
+              >
                 Contacter &rarr;
-              </button>
+              </a>
             </div>
           </div>
         </div>

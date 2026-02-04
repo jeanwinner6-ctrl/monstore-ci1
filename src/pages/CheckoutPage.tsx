@@ -233,7 +233,7 @@ export function CheckoutPage({ cartItems, clearCart }: CheckoutPageProps) {
               <div className="mt-6 bg-green-50 p-3 rounded-md flex items-start">
                 <CheckCircle className="w-5 h-5 text-green-600 mr-2 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-green-800">
-                  Paiement sécurisé et crypté. Satisfait ou remboursé sous 7 jours.
+                  Paiement sécurisé et crypté. Satisfait ou remboursé en 7 jours.
                 </p>
               </div>
             </div>

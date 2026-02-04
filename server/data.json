@@ -1,0 +1,29 @@
+{
+  "products": [],
+  "orders": [],
+  "customers": [],
+  "payments": [
+    {
+      "provider": "wave",
+      "enabled": true
+    },
+    {
+      "provider": "om",
+      "enabled": true
+    },
+    {
+      "provider": "mtn",
+      "enabled": true
+    },
+    {
+      "provider": "moov",
+      "enabled": false
+    }
+  ],
+  "sellerRequests": [],
+  "sellerApplications": [],
+  "contactMessages": [],
+  "users": [],
+  "sellers": [],
+  "sellerProducts": {}
+}

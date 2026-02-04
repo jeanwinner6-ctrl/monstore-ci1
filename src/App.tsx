@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { ProtectedAdminRoute } from './components/ProtectedAdminRoute'
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { Header } from './components/Header'
@@ -20,6 +21,12 @@ import { ContactPage } from './pages/ContactPage'
 import { TermsPage } from './pages/TermsPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { WishlistPage } from './pages/WishlistPage'
+import { SellPage } from './pages/SellPage'
+import { AdminImageLibrary } from './pages/AdminImageLibrary'
+// Nouveaux imports: espace vendeur protégé
+import { SellerDashboard } from './pages/SellerDashboard'
+import { ProtectedSellerRoute } from './components/ProtectedSellerRoute'
+
 // Scroll to top on route change
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -28,6 +35,7 @@ function ScrollToTop() {
   }, [pathname])
   return null
 }
+
 // Protected Route for authenticated users
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useApp()
@@ -36,22 +44,48 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
   return <>{children}</>
 }
+
 // Main App Content
 function AppContent() {
   const { products, addToCart, cartItems, clearCart } = useApp()
   return (
     <div className="min-h-screen bg-white font-sans text-gray-900">
       <Routes>
-        {/* Admin Route */}
-        <Route
-          path="/admin"
-          element={
-            <>
-              <Header />
-              <AdminDashboard />
-            </>
-          }
-        />
+        {/* Admin Route protégée */}
+        <Route path="/admin" element={<ProtectedAdminRoute />}>
+          <Route
+            index
+            element={
+              <>
+                <Header />
+                <AdminDashboard />
+              </>
+            }
+          />
+          <Route
+    path="images"
+    element={
+      <>
+        <Header />
+        <AdminImageLibrary />
+      </>
+    }
+  />
+        </Route>
+
+        {/* Espace Vendeur protégé (doit être vendeur approuvé) */}
+        <Route path="/seller" element={<ProtectedSellerRoute />}>
+          <Route
+            index
+            element={
+              <>
+                <Header />
+                <SellerDashboard />
+              </>
+            }
+          />
+        </Route>
+
         {/* Main Routes */}
         <Route
           path="*"
@@ -95,6 +129,16 @@ function AppContent() {
                   <Route path="/contact" element={<ContactPage />} />
                   <Route path="/terms" element={<TermsPage />} />
                   <Route path="/privacy" element={<PrivacyPage />} />
+
+                  {/* Vendeurs: la demande /sell nécessite d'être connecté */}
+                  <Route
+                    path="/sell"
+                    element={
+                      <ProtectedRoute>
+                        <SellPage />
+                      </ProtectedRoute>
+                    }
+                  />
                 </Routes>
               </main>
               <Footer />
@@ -106,6 +150,7 @@ function AppContent() {
     </div>
   )
 }
+
 export function App() {
   return (
     <Router>

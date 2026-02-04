@@ -1,78 +1,142 @@
-import React, { useState } from 'react'
-import { Users, ShoppingBag, DollarSign, Package, TrendingUp, Download, Plus, Settings, AlertTriangle, Eye, Edit, Trash2, X, Search } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { Users, ShoppingBag, DollarSign, Package, TrendingUp, Download, Plus, Settings, AlertTriangle, Eye, Edit, Search, Trash2, LogOut } from 'lucide-react'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Modal } from '../components/ui/Modal'
 import { Textarea } from '../components/ui/Textarea'
 import { useApp } from '../context/AppContext'
+import { ImageUploader } from '../components/ui/ImageUploader'
+import { api } from '../services/api'
+import type { AdminOverview, Order, Customer, Product, PaymentProviderConfig } from '../types'
+import { jsPDF } from 'jspdf'
+import { AdminUsersTable } from '../components/admin/AdminUsersTable'
+import { AdminSellerApplications } from '../components/admin/AdminSellerApplications'
+import { AdminContactMessages } from '../components/admin/AdminContactMessages'
+import { AdminBulkImport } from '../components/admin/AdminBulkImport'
+import { Link } from 'react-router-dom'
+
+// Catégories + sous-catégories
+const CATEGORY_OPTIONS = ['Électronique', 'Mode', 'Maison', 'Beauté & Santé', 'Sports'] as const
+const SUBCATEGORY_MAP: Record<(typeof CATEGORY_OPTIONS)[number], string[]> = {
+  'Électronique': ['Téléphones', 'Ordinateurs', 'Accessoires', 'TV & Audio', 'Caméras'],
+  'Mode': ['Chaussures', 'Femmes', 'Hommes', 'Montres', 'Enfants'],
+  'Maison': ['Meubles', 'Cuisine', 'Éclairage', 'Literie', 'Décoration'],
+  'Beauté & Santé': ['Maquillage', 'Soins', 'Cheveux', 'Santé', 'Parfums'],
+  'Sports': ['Fitness', 'Football', 'Basketball', 'Camping', 'Vêtements'],
+}
+
+// Paiements: defaults + merge
+const DEFAULT_PAYMENT_CONFIGS: PaymentProviderConfig[] = [
+  { provider: 'wave', enabled: true },
+  { provider: 'om', enabled: true },
+  { provider: 'mtn', enabled: true },
+  { provider: 'moov', enabled: false },
+]
+function mergeWithDefaults(apiConfigs: PaymentProviderConfig[] | undefined): PaymentProviderConfig[] {
+  const byProvider = new Map<string, PaymentProviderConfig>()
+  for (const cfg of DEFAULT_PAYMENT_CONFIGS) byProvider.set(cfg.provider, { ...cfg })
+  for (const cfg of apiConfigs ?? []) {
+    const prev = byProvider.get(cfg.provider)
+    byProvider.set(cfg.provider, { ...(prev ?? {} as PaymentProviderConfig), ...cfg })
+  }
+  return Array.from(byProvider.values())
+}
 
 export function AdminDashboard() {
-  const { products, setProducts, orders, customers } = useApp()
-  
-  // Modal states
+  const { setProducts } = useApp()
+
+  // Données “réelles” chargées par API
+  const [overview, setOverview] = useState<AdminOverview>({
+    monthRevenue: 0,
+    ordersCount: 0,
+    customersCount: 0,
+    productsCount: 0,
+  })
+  const [orders, setOrders] = useState<Order[]>([])
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [products, setLocalProducts] = useState<Product[]>([])
+
+  const [loading, setLoading] = useState<boolean>(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Modals
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [showManageCustomers, setShowManageCustomers] = useState(false)
   const [showPaymentSettings, setShowPaymentSettings] = useState(false)
   const [showAllOrders, setShowAllOrders] = useState(false)
-  
-  // New product form (ajout du champ stock)
+
+  // Formulaire produit: dropshipping + upload d’image + sous-catégorie
   const [newProduct, setNewProduct] = useState({
     title: '',
     price: '',
-    category: 'Électronique',
+    category: 'Électronique' as (typeof CATEGORY_OPTIONS)[number],
+    subcategory: SUBCATEGORY_MAP['Électronique'][0],
     description: '',
-    image: '',
+    imageSource: 'upload' as 'upload' | 'url',
+    imageUrl: '',
+    imageFile: null as File | null,
     inStock: true,
-    stock: ''  // ← ajouté
+    dropshipping: false,
+    stock: '',
   })
 
-  // Stats calculation
-  const totalRevenue = orders.reduce((sum, order) => sum + order.total, 0)
-  const totalOrders = orders.length
-  const totalCustomers = customers.length
-  const totalProducts = products.length
+  // Paiements: configs
+  const [paymentConfigs, setPaymentConfigs] = useState<PaymentProviderConfig[]>(DEFAULT_PAYMENT_CONFIGS)
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        setLoading(true)
+        const [ov, recOrders, custs, prods, payCfg] = await Promise.all([
+          api.getAdminOverview().catch(() => ({ monthRevenue: 0, ordersCount: 0, customersCount: 0, productsCount: 0 })),
+          api.getRecentOrders().catch(() => []),
+          api.getCustomers().catch(() => []),
+          api.getProducts().catch(() => []),
+          api.getPaymentConfigs().catch(() => []),
+        ])
+        if (!mounted) return
+        setOverview(ov ?? { monthRevenue: 0, ordersCount: 0, customersCount: 0, productsCount: 0 })
+        setOrders(Array.isArray(recOrders) ? recOrders : [])
+        setCustomers(Array.isArray(custs) ? custs : [])
+        setLocalProducts(Array.isArray(prods) ? prods : [])
+        // Paiements: fusion avec defaults pour toujours voir les providers
+        setPaymentConfigs(mergeWithDefaults(Array.isArray(payCfg) ? payCfg : []))
+        setError(null)
+      } catch (e: any) {
+        setError(e?.message || 'Erreur de chargement')
+      } finally {
+        setLoading(false)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  // Stats calculées sur les données réelles (zéro par défaut)
+  const totalRevenue = overview.monthRevenue ?? 0
+  const totalOrders = overview.ordersCount ?? orders.length
+  const totalCustomers = overview.customersCount ?? customers.length
+  const totalProducts = overview.productsCount ?? products.length
 
   const stats = [
-    {
-      label: 'Revenus du mois',
-      value: new Intl.NumberFormat('fr-CI').format(totalRevenue) + ' FCFA',
-      icon: DollarSign,
-      color: 'bg-green-100 text-green-600',
-      trend: '+12%'
-    },
-    {
-      label: 'Commandes',
-      value: totalOrders.toLocaleString(),
-      icon: ShoppingBag,
-      color: 'bg-blue-100 text-blue-600',
-      trend: '+8%'
-    },
-    {
-      label: 'Clients',
-      value: totalCustomers.toLocaleString(),
-      icon: Users,
-      color: 'bg-purple-100 text-purple-600',
-      trend: '+15%'
-    },
-    {
-      label: 'Produits',
-      value: totalProducts.toLocaleString(),
-      icon: Package,
-      color: 'bg-orange-100 text-orange-600',
-      trend: '+3%'
-    },
+    { label: 'Revenus du mois', value: new Intl.NumberFormat('fr-CI').format(totalRevenue) + ' FCFA', icon: DollarSign, color: 'bg-green-100 text-green-600', trend: '' },
+    { label: 'Commandes', value: (totalOrders || 0).toLocaleString(), icon: ShoppingBag, color: 'bg-blue-100 text-blue-600', trend: '' },
+    { label: 'Clients', value: (totalCustomers || 0).toLocaleString(), icon: Users, color: 'bg-purple-100 text-purple-600', trend: '' },
+    { label: 'Produits', value: (totalProducts || 0).toLocaleString(), icon: Package, color: 'bg-orange-100 text-orange-600', trend: '' },
   ]
 
-  // Low stock products → version dynamique (remplace la liste statique)
+  // Produits à stock faible (dynamique)
   const lowStockProducts = products
-    .filter(product => product.inStock && (product.stock ?? 10) <= 10)
-    .sort((a, b) => (a.stock ?? 10) - (b.stock ?? 10))
+    .filter(p => (p.inStock ?? true) && (p.stock ?? 0) <= 10)
+    .sort((a, b) => (a.stock ?? 0) - (b.stock ?? 0))
     .slice(0, 4)
-    .map(product => ({
-      name: product.title,
-      stock: product.stock ?? 0,
-      status: (product.stock ?? 0) <= 5 ? 'critical' : 'warning'
+    .map(p => ({
+      name: p.title,
+      stock: p.stock ?? 0,
+      status: (p.stock ?? 0) <= 5 ? 'critical' : 'warning',
     }))
 
   const getStatusBadge = (status: string) => {
@@ -86,53 +150,146 @@ export function AdminDashboard() {
     }
   }
 
-  const handleDownloadReport = () => {
+  const formatPrice = (price: number) => new Intl.NumberFormat('fr-CI').format(price) + ' FCFA'
+
+  // Déconnexion admin (invalide le token local)
+  const adminLogout = () => {
+    localStorage.removeItem('adminAuthToken')
+    window.location.reload()
+  }
+
+  // Rapport CSV
+  const handleDownloadReportCSV = () => {
     const csvContent = [
       ['ID', 'Client', 'Date', 'Total', 'Statut'],
       ...orders.map(order => [
         order.id,
         order.customer,
         order.date,
-        order.total + ' FCFA',
-        order.status
-      ])
+        `${order.total} FCFA`,
+        order.status,
+      ]),
     ].map(row => row.join(',')).join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `rapport_monstore_${new Date().toISOString().split('T')[0]}.csv`
+    link.download = `monstoreci_rapport_${new Date().toISOString().split('T')[0]}.csv`
     link.click()
   }
 
-  const handleAddProduct = () => {
-    if (!newProduct.title || !newProduct.price) return
-    const product = {
-      id: String(products.length + 1),
-      title: newProduct.title,
-      price: parseInt(newProduct.price),
-      category: newProduct.category,
-      description: newProduct.description,
-      image: newProduct.image || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600',
-      rating: 4.5,
-      reviews: 0,
-      inStock: newProduct.inStock,
-      stock: newProduct.stock ? parseInt(newProduct.stock) : 50  // ← ajouté
-    }
-    setProducts([...products, product])
-    setNewProduct({ 
-      title: '', 
-      price: '', 
-      category: 'Électronique', 
-      description: '', 
-      image: '', 
-      inStock: true,
-      stock: ''  // reset
+  // Rapport PDF
+  const handleDownloadReportPDF = () => {
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+    const siteName = 'MonStore.CI'
+    const title = 'Rapport des Commandes'
+    const dateStr = new Date().toLocaleString('fr-CI')
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18)
+    doc.text(`${siteName} — ${title}`, 40, 40)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11)
+    doc.text(`Généré le: ${dateStr}`, 40, 60)
+
+    let y = 90
+    doc.setFont('helvetica', 'bold')
+    doc.text('ID', 40, y); doc.text('Client', 120, y); doc.text('Date', 260, y); doc.text('Total', 360, y); doc.text('Statut', 440, y)
+    doc.setFont('helvetica', 'normal'); y += 12
+    orders.forEach(order => {
+      doc.text(order.id, 40, y)
+      doc.text(order.customer, 120, y)
+      doc.text(order.date, 260, y)
+      doc.text(`${order.total} FCFA`, 360, y)
+      doc.text(order.status, 440, y)
+      y += 16
+      if (y > 760) { doc.addPage(); y = 40 }
     })
-    setShowAddProduct(false)
+    doc.save(`monstoreci_rapport_${new Date().toISOString().split('T')[0]}.pdf`)
   }
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('fr-CI').format(price) + ' FCFA'
+  const handleAddProduct = async () => {
+    if (!newProduct.title || !newProduct.price) return
+    try {
+      let finalImageUrl = newProduct.imageUrl || ''
+      if (newProduct.imageSource === 'upload' && newProduct.imageFile) {
+        const { url } = await api.uploadImage(newProduct.imageFile)
+        finalImageUrl = url
+      }
+      const payload: Omit<Product, 'id'> = {
+        title: newProduct.title,
+        price: parseInt(newProduct.price, 10),
+        category: newProduct.category,
+        subcategory: newProduct.subcategory,
+        description: newProduct.description,
+        image: finalImageUrl || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600',
+        rating: 0,
+        reviews: 0,
+        dropshipping: newProduct.dropshipping,
+        inStock: newProduct.dropshipping ? true : (parseInt(newProduct.stock || '0', 10) > 0),
+        stock: newProduct.dropshipping ? undefined : (newProduct.stock ? parseInt(newProduct.stock, 10) : 0),
+      }
+      const created = await api.createProduct(payload)
+      const createdProduct: Product = created.id ? created : { ...created, id: crypto.randomUUID() }
+      setLocalProducts(prev => [createdProduct, ...prev])
+      setProducts(prev => [createdProduct, ...prev])
+      setNewProduct({
+        title: '',
+        price: '',
+        category: 'Électronique',
+        subcategory: SUBCATEGORY_MAP['Électronique'][0],
+        description: '',
+        imageSource: 'upload',
+        imageUrl: '',
+        imageFile: null,
+        inStock: true,
+        dropshipping: false,
+        stock: '',
+      })
+      setShowAddProduct(false)
+    } catch (e) {
+      console.error(e)
+      alert('Erreur lors de la création du produit.')
+    }
+  }
+
+  // Suppression de produit
+  const handleDeleteProduct = async (id: string) => {
+    if (!confirm('Supprimer ce produit ?')) return
+    try {
+      await api.deleteProduct(id)
+      setLocalProducts(prev => prev.filter(p => p.id !== id))
+      setProducts(prev => prev.filter(p => p.id !== id))
+    } catch (e) {
+      console.error(e)
+      alert('Suppression échouée.')
+    }
+  }
+
+  // Paiements: persistance immédiate du switch
+  const handleToggleProvider = async (cfg: PaymentProviderConfig, enabled: boolean) => {
+    const next = { ...cfg, enabled }
+    // maj immédiate UI
+    setPaymentConfigs(prev => prev.map(c => c.provider === cfg.provider ? next : c))
+    try {
+      await api.updatePaymentConfig(next)
+    } catch (e) {
+      console.error(e)
+      alert('Erreur de mise à jour du statut du provider.')
+    }
+  }
+
+  // Paiements: sauvegarde groupée des champs API
+  const handleSavePaymentConfigs = async () => {
+    try {
+      for (const cfg of paymentConfigs) {
+        await api.updatePaymentConfig(cfg)
+      }
+      alert('Configuration enregistrée.')
+      // recharger depuis l’API pour refléter
+      const latest = await api.getPaymentConfigs().catch(() => [])
+      setPaymentConfigs(mergeWithDefaults(latest))
+    } catch (e) {
+      console.error(e)
+      alert('Erreur lors de l’enregistrement de la configuration.')
+    }
   }
 
   return (
@@ -144,10 +301,28 @@ export function AdminDashboard() {
             <h1 className="text-2xl font-bold text-gray-900">Tableau de Bord Admin</h1>
             <p className="text-sm text-gray-500 mt-1">Bienvenue ! Voici un aperçu de votre boutique.</p>
           </div>
-          <Button onClick={handleDownloadReport}>
-            <Download className="w-4 h-4 mr-2" />
-            Télécharger le rapport
-          </Button>
+          <div className="flex gap-3">
+            <Button onClick={handleDownloadReportCSV}>
+              <Download className="w-4 h-4 mr-2" />
+              Télécharger CSV
+            </Button>
+            <Button variant="outline" onClick={handleDownloadReportPDF}>
+              <Download className="w-4 h-4 mr-2" />
+              Télécharger PDF
+            </Button>
+            <AdminBulkImport onImported={(created) => {
+              setLocalProducts(prev => [...created, ...prev])
+              setProducts(prev => [...created, ...prev])
+              alert(`${created.length} produits importés.`)
+            }} />
+            <Link to="/admin/images">
+              <Button variant="outline">Bibliothèque d’images</Button>
+            </Link>
+            <Button variant="outline" onClick={adminLogout}>
+              <LogOut className="w-4 h-4 mr-2" />
+              Se déconnecter (Admin)
+            </Button>
+          </div>
         </div>
 
         {/* Stats Grid */}
@@ -158,8 +333,8 @@ export function AdminDashboard() {
                 <div className={`p-3 rounded-full ${stat.color}`}>
                   <stat.icon className="w-6 h-6" />
                 </div>
-                <span className="text-xs font-medium text-green-600 flex items-center bg-green-50 px-2 py-1 rounded-full">
-                  <TrendingUp className="w-3 h-3 mr-1" /> {stat.trend}
+                <span className="text-xs font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded-full">
+                  {stat.trend || '—'}
                 </span>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-1">{stat.value}</h3>
@@ -169,7 +344,7 @@ export function AdminDashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Recent Orders */}
+          {/* Commandes Récentes */}
           <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-lg font-bold text-gray-900">Commandes Récentes</h2>
@@ -193,7 +368,7 @@ export function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.slice(0, 5).map((order) => (
+                  {(orders || []).slice(0, 5).map((order) => (
                     <tr key={order.id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="px-6 py-4 font-medium text-gray-900">{order.id}</td>
                       <td className="px-6 py-4">{order.customer}</td>
@@ -207,6 +382,11 @@ export function AdminDashboard() {
                       </td>
                     </tr>
                   ))}
+                  {(!orders || orders.length === 0) && (
+                    <tr>
+                      <td className="px-6 py-4 text-gray-500" colSpan={6}>Aucune commande récente</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -214,7 +394,7 @@ export function AdminDashboard() {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Quick Actions */}
+            {/* Actions Rapides */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4">Actions Rapides</h2>
               <div className="space-y-3">
@@ -239,7 +419,35 @@ export function AdminDashboard() {
               </div>
             </div>
 
-            {/* Stock Alerts – maintenant dynamique */}
+            {/* Liste Produits: suppression */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6">
+              <h2 className="text-lg font-bold text-gray-900 mb-4">Produits</h2>
+              {products.length === 0 ? (
+                <p className="text-sm text-gray-500">Aucun produit</p>
+              ) : (
+                <div className="space-y-3">
+                  {products.slice(0, 8).map(p => (
+                    <div key={p.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img src={p.image} alt={p.title} className="w-10 h-10 rounded border object-contain bg-gray-50" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{p.title}</p>
+                          <p className="text-xs text-gray-500">{p.category}{p.subcategory ? ` • ${p.subcategory}` : ''}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => handleDeleteProduct(p.id)}>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Supprimer
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Alertes Stock */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                 <AlertTriangle className="w-5 h-5 mr-2 text-yellow-500" />
@@ -252,14 +460,10 @@ export function AdminDashboard() {
                   lowStockProducts.map((product, index) => (
                     <div key={index} className="flex items-center justify-between text-sm">
                       <div className="flex items-center">
-                        <div className={`w-2 h-2 rounded-full mr-2 ${
-                          product.status === 'critical' ? 'bg-red-500' : 'bg-yellow-500'
-                        }`}></div>
+                        <div className={`w-2 h-2 rounded-full mr-2 ${product.status === 'critical' ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
                         <span className="text-gray-600 truncate max-w-[150px]">{product.name}</span>
                       </div>
-                      <span className={`font-bold ${
-                        product.status === 'critical' ? 'text-red-600' : 'text-yellow-600'
-                      }`}>
+                      <span className={`font-bold ${product.status === 'critical' ? 'text-red-600' : 'text-yellow-600'}`}>
                         {product.stock} restants
                       </span>
                     </div>
@@ -295,23 +499,59 @@ export function AdminDashboard() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Catégorie</label>
               <select
                 value={newProduct.category}
-                onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
+                onChange={(e) => {
+                  const cat = e.target.value as (typeof CATEGORY_OPTIONS)[number]
+                  setNewProduct({ ...newProduct, category: cat, subcategory: SUBCATEGORY_MAP[cat][0] })
+                }}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#FF6B00] focus:border-[#FF6B00]"
               >
-                <option>Électronique</option>
-                <option>Mode</option>
-                <option>Maison</option>
-                <option>Beauté & Santé</option>
-                <option>Sports</option>
+                {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           </div>
-          <Input
-            label="URL de l'image"
-            placeholder="https://..."
-            value={newProduct.image}
-            onChange={(e) => setNewProduct({ ...newProduct, image: e.target.value })}
-          />
+          {/* Sous-catégorie */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Sous-catégorie</label>
+            <select
+              value={newProduct.subcategory}
+              onChange={(e) => setNewProduct({ ...newProduct, subcategory: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#FF6B00]"
+            >
+              {SUBCATEGORY_MAP[newProduct.category].map(sc => <option key={sc} value={sc}>{sc}</option>)}
+            </select>
+          </div>
+
+          {/* Source d'image: upload ou url */}
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={newProduct.imageSource === 'upload'}
+                onChange={() => setNewProduct({ ...newProduct, imageSource: 'upload', imageUrl: '' })}
+              />
+              Téléverser une image
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={newProduct.imageSource === 'url'}
+                onChange={() => setNewProduct({ ...newProduct, imageSource: 'url', imageFile: null })}
+              />
+              Utiliser une URL
+            </label>
+          </div>
+
+          {newProduct.imageSource === 'upload' ? (
+            <ImageUploader onFileSelected={(file) => setNewProduct({ ...newProduct, imageFile: file })} />
+          ) : (
+            <Input
+              label="URL de l'image"
+              placeholder="https://..."
+              value={newProduct.imageUrl}
+              onChange={(e) => setNewProduct({ ...newProduct, imageUrl: e.target.value })}
+            />
+          )}
+
           <Textarea
             label="Description"
             placeholder="Description du produit..."
@@ -319,25 +559,36 @@ export function AdminDashboard() {
             value={newProduct.description}
             onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
           />
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              id="inStock"
-              checked={newProduct.inStock}
-              onChange={(e) => setNewProduct({ ...newProduct, inStock: e.target.checked })}
-              className="rounded border-gray-300 text-[#FF6B00] focus:ring-[#FF6B00]"
-            />
-            <label htmlFor="inStock" className="ml-2 text-sm text-gray-700">En stock</label>
-          </div>
 
-          {/* Champ stock ajouté ici */}
-          <Input
-            label="Stock initial"
-            type="number"
-            placeholder="50"
-            value={newProduct.stock}
-            onChange={(e) => setNewProduct({ ...newProduct, stock: e.target.value })}
-          />
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={newProduct.dropshipping}
+                onChange={(e) => setNewProduct({ ...newProduct, dropshipping: e.target.checked })}
+              />
+              Dropshipping
+            </label>
+            {!newProduct.dropshipping && (
+              <>
+                <Input
+                  label="Stock initial"
+                  type="number"
+                  placeholder="50"
+                  value={newProduct.stock}
+                  onChange={(e) => setNewProduct({ ...newProduct, stock: e.target.value })}
+                />
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={newProduct.inStock}
+                    onChange={(e) => setNewProduct({ ...newProduct, inStock: e.target.checked })}
+                  />
+                  En stock
+                </label>
+              </>
+            )}
+          </div>
 
           <div className="flex justify-end gap-3 pt-4">
             <Button variant="outline" onClick={() => setShowAddProduct(false)}>Annuler</Button>
@@ -346,7 +597,6 @@ export function AdminDashboard() {
         </div>
       </Modal>
 
-      {/* Les autres modals restent inchangés */}
       {/* Manage Customers Modal */}
       <Modal isOpen={showManageCustomers} onClose={() => setShowManageCustomers(false)} title="Gestion des clients" size="xl">
         <div className="space-y-4">
@@ -373,7 +623,7 @@ export function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {customers.map((customer) => (
+                {(customers || []).map((customer) => (
                   <tr key={customer.id} className="border-b border-gray-100">
                     <td className="px-4 py-3 font-medium">{customer.name}</td>
                     <td className="px-4 py-3 text-gray-500">{customer.email}</td>
@@ -388,6 +638,11 @@ export function AdminDashboard() {
                     </td>
                   </tr>
                 ))}
+                {(!customers || customers.length === 0) && (
+                  <tr>
+                    <td className="px-4 py-3 text-gray-500" colSpan={6}>Aucun client</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -398,38 +653,65 @@ export function AdminDashboard() {
       <Modal isOpen={showPaymentSettings} onClose={() => setShowPaymentSettings(false)} title="Configuration des paiements" size="lg">
         <div className="space-y-6">
           <p className="text-sm text-gray-600">Configurez vos méthodes de paiement Mobile Money pour la Côte d'Ivoire.</p>
-          
-          {[
-            { name: 'Wave', color: 'bg-blue-500', enabled: true },
-            { name: 'Orange Money', color: 'bg-orange-500', enabled: true },
-            { name: 'MTN Money', color: 'bg-yellow-400', enabled: true },
-            { name: 'Moov Money', color: 'bg-blue-800', enabled: false },
-          ].map((provider) => (
-            <div key={provider.name} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+
+          {paymentConfigs.map(cfg => (
+            <div key={cfg.provider} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 ${provider.color} rounded-full flex items-center justify-center text-white font-bold text-sm`}>
-                  {provider.name.charAt(0)}
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm ${
+                  cfg.provider === 'wave' ? 'bg-blue-500' :
+                  cfg.provider === 'om' ? 'bg-orange-500' :
+                  cfg.provider === 'mtn' ? 'bg-yellow-400' :
+                  'bg-blue-800'
+                }`}>
+                  {cfg.provider.toUpperCase().charAt(0)}
                 </div>
                 <div>
-                  <p className="font-medium text-gray-900">{provider.name}</p>
+                  <p className="font-medium text-gray-900">
+                    {cfg.provider === 'wave' ? 'Wave' :
+                     cfg.provider === 'om' ? 'Orange Money' :
+                     cfg.provider === 'mtn' ? 'MTN Money' : 'Moov Money'}
+                  </p>
                   <p className="text-xs text-gray-500">Paiement mobile</p>
                 </div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" defaultChecked={provider.enabled} className="sr-only peer" />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[#FF6B00] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF6B00]"></div>
+                <input
+                  type="checkbox"
+                  checked={!!cfg.enabled}
+                  onChange={(e) => handleToggleProvider(cfg, e.target.checked)}
+                />
+                <span className="ml-2 text-sm">{cfg.enabled ? 'Activé' : 'Désactivé'}</span>
               </label>
             </div>
           ))}
+
           <div className="bg-gray-50 p-4 rounded-lg">
             <h4 className="font-medium text-gray-900 mb-2">Clés API</h4>
             <p className="text-xs text-gray-500 mb-3">Entrez vos clés API pour activer les paiements en production.</p>
-            <Input label="Clé API Wave" placeholder="wv_live_..." className="mb-3" />
-            <Input label="Clé API Orange Money" placeholder="om_live_..." />
+            {paymentConfigs.map(cfg => (
+              <div key={`${cfg.provider}-keys`} className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <Input
+                  label={`API Key (${cfg.provider})`}
+                  value={cfg.apiKey ?? ''}
+                  onChange={(e) => setPaymentConfigs(prev => prev.map(c => c.provider === cfg.provider ? { ...c, apiKey: e.target.value } : c))}
+                />
+                <Input
+                  label={`API Secret (${cfg.provider})`}
+                  value={cfg.apiSecret ?? ''}
+                  onChange={(e) => setPaymentConfigs(prev => prev.map(c => c.provider === cfg.provider ? { ...c, apiSecret: e.target.value } : c))}
+                />
+                <Input
+                  label={`Callback URL (${cfg.provider})`}
+                  value={cfg.callbackUrl ?? ''}
+                  onChange={(e) => setPaymentConfigs(prev => prev.map(c => c.provider === cfg.provider ? { ...c, callbackUrl: e.target.value } : c))}
+                />
+              </div>
+            ))}
           </div>
+
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={() => setShowPaymentSettings(false)}>Annuler</Button>
-            <Button onClick={() => setShowPaymentSettings(false)}>Enregistrer</Button>
+            <Button onClick={handleSavePaymentConfigs}>Enregistrer</Button>
           </div>
         </div>
       </Modal>
@@ -450,12 +732,12 @@ export function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
+              {(orders || []).map((order) => (
                 <tr key={order.id} className="border-b border-gray-100">
                   <td className="px-4 py-3 font-medium">{order.id}</td>
                   <td className="px-4 py-3">{order.customer}</td>
                   <td className="px-4 py-3 text-gray-500">{order.date}</td>
-                  <td className="px-4 py-3">{order.items}</td>
+                  <td className="px-4 py-3">{(order as any).items ?? '-'}</td>
                   <td className="px-4 py-3 font-medium">{formatPrice(order.total)}</td>
                   <td className="px-4 py-3">{getStatusBadge(order.status)}</td>
                   <td className="px-4 py-3">
@@ -466,10 +748,23 @@ export function AdminDashboard() {
                   </td>
                 </tr>
               ))}
+              {(!orders || orders.length === 0) && (
+                <tr>
+                  <td className="px-4 py-3 text-gray-500" colSpan={7}>Aucune commande</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </Modal>
+      {/* Admin: Inscriptions & Demandes vendeurs */}
+<div className="max-w-7xl mx-auto mt-8">
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <AdminUsersTable />
+    <AdminSellerApplications />
+    <AdminContactMessages />
+  </div>
+</div>
     </div>
   )
 }
